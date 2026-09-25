@@ -1,0 +1,10 @@
+{
+  "workflow_id": "6c38cd80adf64ca8885e22cd056a795b",
+  "success": true,
+  "final_state": "COMPLETED",
+  "executions": 2,
+  "validations": 2,
+  "replans": 1,
+  "termination": "validated",
+  "failure": null
+}

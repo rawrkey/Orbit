@@ -1,0 +1,15 @@
+{
+  "workflow_id": "9324c26f5c614c71b2830d64ae333e1e",
+  "goal": "Find options under a budget of 8000.",
+  "state": "VALIDATING",
+  "replan_count": 0,
+  "created_at": "2026-09-25T18:23:36.999763Z",
+  "updated_at": "2026-09-25T18:23:37.002919Z",
+  "task_count": 2,
+  "observation_count": 2,
+  "event_count": 18,
+  "plan_version": 1,
+  "clarification_questions": [],
+  "final_answer": null,
+  "failure": null
+}

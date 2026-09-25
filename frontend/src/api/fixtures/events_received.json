@@ -1,0 +1,17 @@
+{
+  "workflow_id": "6c38cd80adf64ca8885e22cd056a795b",
+  "events": [
+    {
+      "seq": 0,
+      "timestamp": "2026-09-25T18:23:36.880177Z",
+      "type": "workflow.started",
+      "state": "RECEIVED",
+      "task_id": null,
+      "decision_summary": "Goal received.",
+      "payload": {
+        "goal": "Find options under a budget of 8000."
+      }
+    }
+  ],
+  "count": 1
+}

@@ -1,0 +1,15 @@
+{
+  "workflow_id": "a8aff09846fd4ea1ac066de7f4ed8c41",
+  "success": false,
+  "final_state": "FAILED",
+  "executions": 0,
+  "validations": 0,
+  "replans": 0,
+  "termination": "analysis_error",
+  "failure": {
+    "stage": "ANALYZING",
+    "error_code": "LLM_ERROR",
+    "detail": "no scripted GoalAnalysis responses left",
+    "task_id": null
+  }
+}
