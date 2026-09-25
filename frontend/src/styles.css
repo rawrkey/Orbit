@@ -201,7 +201,11 @@ h3 {
   gap: 0.55rem;
   flex-wrap: wrap;
   margin: 0.15rem 0 0.9rem;
-  font-size: 1rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 1.05rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
 }
 
 .state-label {
@@ -209,12 +213,24 @@ h3 {
 }
 
 .state-code {
-  font-size: 0.66rem;
-  color: var(--text-dim);
-  border: 1px solid var(--line);
-  padding: 0.1rem 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  padding: 0.1rem 0.45rem;
   border-radius: 2px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
+}
+
+.system-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.35rem 0 0.9rem;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--accent);
 }
 
 .state-dot {
@@ -445,6 +461,61 @@ textarea::placeholder {
   margin-bottom: 1.1rem;
 }
 
+.intake-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.btn--demo {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.btn--demo:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #17130a;
+}
+
+.examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--line);
+}
+
+.examples-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.example {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.example:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 /* --------------------------------------------------------------------------
    Goal band
    -------------------------------------------------------------------------- */
@@ -524,88 +595,155 @@ textarea::placeholder {
   animation: soft-pulse 2.2s ease-in-out infinite;
 }
 
-/* Replan chain — a quiet vertical transition, staggered on entrance. */
+/* --------------------------------------------------------------------------
+   Adaptive loop — the unmissable ladder (validation failed → passed)
+   -------------------------------------------------------------------------- */
 
-.adapt {
-  margin-top: 1.15rem;
-  padding-top: 0.9rem;
-  border-top: 1px dashed var(--line);
+.adapt-band {
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent);
 }
 
-.chain {
+.ladder {
   list-style: none;
-  margin: 0.4rem 0 0;
+  margin: 0;
   padding: 0;
 }
 
-.chain-step {
+.ladder-step {
   position: relative;
-  padding: 0.32rem 0 0.6rem 1.5rem;
+  padding: 0.4rem 0 0.8rem 1.75rem;
   animation: step-in 0.4s ease-out both;
-  animation-delay: calc(var(--i, 0) * 110ms);
+  animation-delay: calc(var(--i, 0) * 120ms);
 }
 
-.chain-step::before {
+.ladder-step::before {
   content: '';
   position: absolute;
   left: 0.1rem;
-  top: 0.62rem;
-  width: 0.42rem;
-  height: 0.42rem;
+  top: 0.55rem;
+  width: 0.52rem;
+  height: 0.52rem;
   border-radius: 50%;
   border: 1px solid var(--line-strong);
-  background: var(--panel);
+  background: var(--panel-2);
 }
 
-.chain-step::after {
+.ladder-step::after {
   content: '';
   position: absolute;
-  left: 0.31rem;
-  top: 1.1rem;
-  bottom: -0.1rem;
+  left: 0.36rem;
+  top: 1.15rem;
+  bottom: -0.05rem;
   width: 1px;
   background: var(--line-strong);
 }
 
-.chain-step:last-child::after {
+.ladder-step:last-child::after {
   display: none;
 }
 
-.chain-step--done::before {
+.ladder-step[data-state='done'][data-tone='fail']::before {
+  background: var(--bad);
+  border-color: var(--bad);
+}
+
+.ladder-step[data-state='done'][data-tone='adapt']::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ladder-step[data-state='done'][data-tone='pass']::before {
   background: var(--good);
   border-color: var(--good);
 }
 
-.chain-step--current::before {
+.ladder-step[data-state='current']::before {
   background: var(--accent);
   border-color: var(--accent);
   animation: soft-pulse 1.8s ease-in-out infinite;
 }
 
-.chain-label {
+.ladder-label {
   display: block;
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 
-.chain-step--done .chain-label {
+.ladder-step--done .ladder-label {
+  color: var(--text);
+}
+
+.ladder-step--current .ladder-label {
+  color: var(--accent);
+}
+
+.ladder-detail {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+/* Plan version history (superseded plan → what changed → current below). */
+
+.plan-history {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+
+.plan-card {
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--bg);
+  padding: 0.5rem 0.7rem;
+}
+
+.plan-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.plan-card-name {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.plan-card-tag {
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.05rem 0.35rem;
+}
+
+.plan-card-meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
   color: var(--text-dim);
 }
 
-.chain-step--current .chain-label {
+.plan-adapt {
+  margin: 0.1rem 0 0.2rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--accent);
-  font-weight: 500;
-}
-
-.chain-step--pending .chain-label {
-  color: var(--text-faint);
-}
-
-.chain-detail {
-  display: block;
-  margin-top: 0.1rem;
-  font-size: 0.63rem;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
+  animation: step-in 0.4s ease-out both;
 }
 
 /* --------------------------------------------------------------------------
@@ -765,6 +903,22 @@ textarea::placeholder {
   color: var(--text-dim);
 }
 
+.failure-next {
+  margin: 0.7rem 0 0;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+
+.failure-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
 /* --------------------------------------------------------------------------
    Final result — the destination
    -------------------------------------------------------------------------- */
@@ -773,6 +927,7 @@ textarea::placeholder {
   background: var(--panel-2);
   border-top: 1px solid var(--line-strong);
   padding-block: 1.5rem 1.7rem;
+  animation: dest-in 0.45s ease-out both;
 }
 
 .result-top {
@@ -862,6 +1017,14 @@ textarea::placeholder {
   font-size: 0.7rem;
   letter-spacing: 0.05em;
   color: var(--text-dim);
+}
+
+.result-pass {
+  margin: -0.6rem 0 1rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--good);
 }
 
 .result-meta {
@@ -1016,9 +1179,20 @@ textarea::placeholder {
 
   /* Right-column bands sit under the trace, not under the plan — asymmetry. */
   .console > .interrupt,
+  .console > .adapt-band,
   .console > .failure-band,
   .console > .result-band {
     margin-left: calc(var(--plan-col) + 1px);
+  }
+
+  /* Demo-friendly: the adaptive flow stays on-screen — the trace scrolls
+     inside its column instead of growing the page unboundedly. */
+  .trace {
+    max-height: min(58vh, 32rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
   }
 
   /* Trace metadata in one dense line. */

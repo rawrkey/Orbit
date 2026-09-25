@@ -1,5 +1,5 @@
 import type { RunWorkflowResponse, WorkflowStatusResponse } from '../api/types';
-import { canRun, isTerminal, phaseLabel } from '../state/phase';
+import { canRun, isActiveState, isTerminal, phaseLabel, runPhrase, systemPhrase } from '../state/phase';
 
 interface StatusPanelProps {
   status: WorkflowStatusResponse;
@@ -10,11 +10,18 @@ interface StatusPanelProps {
 }
 
 /**
- * The persistent operations console: workflow state + compact metadata +
- * run controls. Failure context lives in its own VALIDATION band (App).
+ * The persistent operations console: backend state (the glance answer to
+ * "what is ORBIT doing right now") + compact metadata + run controls.
+ * Loading/transition language is translated from the backend state only.
  */
 export function StatusPanel({ status, report, running, onRun, onReset }: StatusPanelProps) {
   const showRunButton = canRun(status.state);
+  // System line for active work in progress (never for RECEIVED/idle or
+  // terminal states — nothing is inferred from frontend timing).
+  const systemText =
+    !running && isActiveState(status.state) && status.state !== 'RECEIVED'
+      ? systemPhrase(status.state)
+      : null;
 
   return (
     <section aria-label="status-panel" data-testid="status-panel" className="status-console">
@@ -45,7 +52,13 @@ export function StatusPanel({ status, report, running, onRun, onReset }: StatusP
       {running && (
         <p role="status" data-testid="run-in-progress" className="run-live">
           <span className="live-dot" aria-hidden="true" />
-          Run in progress — the backend is working…
+          Run in progress — {runPhrase(status.state)}…
+        </p>
+      )}
+
+      {systemText && (
+        <p role="status" data-testid="system-line" className="system-line mono">
+          {systemText}
         </p>
       )}
 

@@ -11,6 +11,7 @@ import eventsDemo from '../api/fixtures/events_demo.json';
 import {
   clockTime,
   derivePlan,
+  derivePlanHistory,
   deriveReplanChain,
   deriveSynthesis,
   deriveValidation,
@@ -84,20 +85,27 @@ describe('deriveReplanChain (real demo story)', () => {
     const chain = deriveReplanChain(demo);
     expect(chain).not.toBeNull();
     expect(chain?.map((step) => step.label)).toEqual([
-      'Constraint failed',
-      'Validation',
-      'Adapt',
-      'New plan',
-      'Execution resumes',
+      'Validation failed',
+      'Orbit adapted',
+      'Plan revised',
+      'Execution resumed',
+      'Validation passed',
     ]);
     expect(chain?.every((step) => step.state === 'done')).toBe(true);
   });
 
-  it('carries real details: reason, replan budget, version jump', () => {
+  it('carries real details: violation, replan budget, version jump, satisfaction', () => {
     const chain = deriveReplanChain(demo);
-    expect(chain?.[0]?.detail).toBe('Budget verified from the calculator result.');
-    expect(chain?.[2]?.detail).toBe('replan 1 of 3');
-    expect(chain?.[3]?.detail).toBe('v1 → v2');
+    expect(chain?.[0]?.detail).toBe('c1 violated');
+    expect(chain?.[1]?.detail).toBe('replan 1 of 3');
+    expect(chain?.[2]?.detail).toBe('v1 → v2');
+    expect(chain?.[3]?.detail).toBeNull();
+    expect(chain?.[4]?.detail).toBe('c1 satisfied');
+  });
+
+  it('tones the steps for the rail markers', () => {
+    const chain = deriveReplanChain(demo);
+    expect(chain?.map((step) => step.tone)).toEqual(['fail', 'adapt', 'adapt', 'adapt', 'pass']);
   });
 
   it('is absent without validation/replanning events', () => {
@@ -110,6 +118,27 @@ describe('deriveReplanChain (real demo story)', () => {
     expect(mid?.[1]?.state).toBe('done');
     expect(mid?.[2]?.state).toBe('current');
     expect(mid?.[4]?.state).toBe('pending');
+  });
+});
+
+describe('derivePlanHistory (real demo story)', () => {
+  it('replays both plan versions with real counts', () => {
+    const history = derivePlanHistory(demo);
+    expect(history).not.toBeNull();
+    expect(history?.revisions).toEqual([
+      { version: 1, total: 2, completed: 2, constraintFailures: 1 },
+      { version: 2, total: 2, completed: 1, constraintFailures: 0 },
+    ]);
+  });
+
+  it('derives what the replan changed from preserved_completed', () => {
+    const history = derivePlanHistory(demo);
+    expect(history?.links).toEqual([{ from: 1, to: 2, preserved: 1, revised: 1, added: 0 }]);
+  });
+
+  it('is absent before a second plan exists', () => {
+    expect(derivePlanHistory(demo.filter((event) => event.seq <= 20))).toBeNull();
+    expect(derivePlanHistory([])).toBeNull();
   });
 });
 

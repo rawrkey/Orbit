@@ -1,8 +1,7 @@
-import { useMemo } from 'react';
-import type { CSSProperties } from 'react';
+import { Fragment, useMemo } from 'react';
 
 import type { EventView } from '../api/types';
-import { derivePlan, deriveReplanChain, type ChainStep, type PlanTask } from '../state/eventVisual';
+import { derivePlan, derivePlanHistory, type PlanTask } from '../state/eventVisual';
 
 interface PlanPanelProps {
   events: readonly EventView[];
@@ -41,39 +40,17 @@ function TaskRow({ task, active }: { task: PlanTask; active: boolean }) {
   );
 }
 
-function AdaptChain({ steps }: { steps: ChainStep[] }) {
-  return (
-    <div className="adapt">
-      <div className="panel-head">
-        <h3 className="band-label band-label--accent">Adapt</h3>
-        <span className="panel-meta mono">replan</span>
-      </div>
-      <ol className="chain">
-        {steps.map((step, index) => (
-          <li
-            key={step.label}
-            data-state={step.state}
-            className={`chain-step chain-step--${step.state}`}
-            style={{ '--i': index } as CSSProperties}
-          >
-            <span className="chain-label">{step.label}</span>
-            {step.detail && <span className="chain-detail mono">{step.detail}</span>}
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
 /**
- * The PLAN column: current plan recovered from the event log, task progress
- * glyphs (✓ ◉ ○ !), and — when the backend adapted — the replan chain.
+ * The PLAN column: real plan recovered from the event log, task progress
+ * glyphs (✓ ◉ ○ !), and — once a replan happened — the revision history
+ * (superseded plan → what the adaptation changed → current plan below).
  */
 export function PlanPanel({ events, active }: PlanPanelProps) {
   const plan = useMemo(() => derivePlan(events), [events]);
-  const chain = useMemo(() => deriveReplanChain(events), [events]);
+  const history = useMemo(() => derivePlanHistory(events), [events]);
   const done = plan.tasks.filter((task) => task.status === 'done').length;
   const total = plan.tasks.length;
+  const superseded = history ? history.revisions.slice(0, -1) : [];
 
   return (
     <section aria-label="plan" className="band plan-panel">
@@ -85,6 +62,37 @@ export function PlanPanel({ events, active }: PlanPanelProps) {
         </span>
       </div>
 
+      {superseded.length > 0 && history && (
+        <div data-testid="plan-history" className="plan-history">
+          {superseded.map((revision, index) => {
+            const link = history.links[index];
+            return (
+              <Fragment key={revision.version}>
+                <div className="plan-card">
+                  <div className="plan-card-head">
+                    <span className="plan-card-name">Plan v{revision.version}</span>
+                    <span className="plan-card-tag mono">superseded</span>
+                  </div>
+                  <p className="plan-card-meta mono">
+                    {revision.completed}/{revision.total} tasks completed
+                    {revision.constraintFailures > 0 &&
+                      ` · ${revision.constraintFailures} constraint${
+                        revision.constraintFailures === 1 ? '' : 's'
+                      } failed`}
+                  </p>
+                </div>
+                {link && (
+                  <p className="plan-adapt mono" data-testid="plan-adapt-link">
+                    <span aria-hidden="true">↓</span> Adapted · v{link.from} → v{link.to} —{' '}
+                    {link.preserved} preserved · {link.revised} revised · {link.added} new
+                  </p>
+                )}
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+
       {total > 0 ? (
         <ol className="tasks">
           {plan.tasks.map((task) => (
@@ -94,8 +102,6 @@ export function PlanPanel({ events, active }: PlanPanelProps) {
       ) : (
         <p className="empty mono">No plan recorded yet.</p>
       )}
-
-      {chain && <AdaptChain steps={chain} />}
     </section>
   );
 }

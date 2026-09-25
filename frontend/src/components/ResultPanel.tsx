@@ -18,6 +18,10 @@ interface ResultPanelProps {
 export function ResultPanel({ status, events }: ResultPanelProps) {
   const validation = useMemo(() => deriveValidation(events), [events]);
   const synthesis = useMemo(() => deriveSynthesis(events), [events]);
+  const attempts = useMemo(
+    () => events.filter((event) => event.type === 'validation.started').length,
+    [events],
+  );
   const hasOutcomes =
     validation.satisfied.length > 0 ||
     validation.violated.length > 0 ||
@@ -72,6 +76,12 @@ export function ResultPanel({ status, events }: ResultPanelProps) {
           {synthesis.nextActions !== null && (
             <span>{synthesis.nextActions} next actions</span>
           )}
+        </p>
+      )}
+
+      {attempts > 1 && (
+        <p data-testid="result-attempts" className="result-pass mono">
+          validated on attempt {attempts}
         </p>
       )}
 

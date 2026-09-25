@@ -64,3 +64,57 @@ export function allAnswered(
   if (questions.length === 0) return false;
   return questions.every((question) => (answers[question] ?? '').trim().length > 0);
 }
+
+/**
+ * System-language for loading/transition states, translated from the REAL
+ * backend state only (null for RECEIVED/terminal — nothing is inferred from
+ * frontend timing, no progress percentages, no timers).
+ */
+export function systemPhrase(state: WorkflowState): string | null {
+  switch (state) {
+    case 'ANALYZING':
+      return 'ANALYZING GOAL';
+    case 'AWAITING_CLARIFICATION':
+      return 'AWAITING INPUT';
+    case 'PLANNING':
+      return 'BUILDING PLAN';
+    case 'READY':
+      return 'PLAN READY';
+    case 'EXECUTING':
+      return 'EXECUTING';
+    case 'OBSERVING':
+      return 'OBSERVING';
+    case 'AWAITING_VALIDATION':
+    case 'VALIDATING':
+      return 'VALIDATING';
+    case 'REPLANNING':
+      return 'ADAPTING';
+    default:
+      return null;
+  }
+}
+
+/** Inline phrase for the run-in-progress line (backend state, lowercased). */
+export function runPhrase(state: WorkflowState): string {
+  switch (state) {
+    case 'ANALYZING':
+      return 'analyzing goal';
+    case 'PLANNING':
+      return 'building plan';
+    case 'READY':
+      return 'executing plan';
+    case 'EXECUTING':
+      return 'executing';
+    case 'OBSERVING':
+      return 'observing';
+    case 'AWAITING_VALIDATION':
+    case 'VALIDATING':
+      return 'validating';
+    case 'REPLANNING':
+      return 'adapting';
+    case 'AWAITING_CLARIFICATION':
+      return 'awaiting input';
+    default:
+      return 'the backend is working';
+  }
+}

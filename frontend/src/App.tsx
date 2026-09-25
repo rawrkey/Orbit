@@ -1,3 +1,4 @@
+import { AdaptBand } from './components/AdaptBand';
 import { ClarificationForm } from './components/ClarificationForm';
 import { ErrorBanner } from './components/ErrorBanner';
 import { EventTimeline } from './components/EventTimeline';
@@ -23,7 +24,7 @@ export default function App({ pollMs }: AppProps) {
       <header className="topbar">
         <div className="brand">
           <h1 className="brand-mark">ORBIT</h1>
-          <p className="brand-sub mono">adaptive workflow executor</p>
+          <p className="brand-sub mono">Adaptive workflow execution</p>
         </div>
         {status && (
           <StatusPanel
@@ -50,6 +51,7 @@ export default function App({ pollMs }: AppProps) {
             creating={orbit.creating}
             onGoalChange={orbit.setGoal}
             onSubmit={orbit.create}
+            onDemo={orbit.demo}
           />
         )}
 
@@ -59,6 +61,8 @@ export default function App({ pollMs }: AppProps) {
               <span className="band-label">Your goal</span>
               <p className="goal-text">{status.goal}</p>
             </section>
+
+            <AdaptBand events={orbit.events} />
 
             <div className="grid-main">
               <PlanPanel

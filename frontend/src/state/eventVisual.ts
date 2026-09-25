@@ -190,12 +190,15 @@ export interface ChainStep {
   label: string;
   detail: string | null;
   state: 'done' | 'current' | 'pending';
+  /** Semantic tone for the step marker (colors the rail dot). */
+  tone: 'fail' | 'adapt' | 'pass';
 }
 
 /**
- * The adaptation story: constraint failed → validation → adapt → new plan →
- * execution resumes. Steps whose source events have not happened yet render
- * as pending, so the chain also reads correctly mid-replan.
+ * The adaptive loop, read top-to-bottom: validation failed → orbit adapted →
+ * plan revised → execution resumed → validation passed. Steps whose source
+ * events have not happened yet render as pending, so the sequence also reads
+ * correctly mid-replan. Uppercase is applied visually by CSS.
  */
 export function deriveReplanChain(events: readonly EventView[]): ChainStep[] | null {
   const failIndex = lastIndexOfType(events, 'validation.failed');
@@ -207,20 +210,15 @@ export function deriveReplanChain(events: readonly EventView[]): ChainStep[] | n
   const start = startIndex >= 0 ? events[startIndex] : undefined;
   const acceptIndex = lastIndexOfType(events, 'replan.accepted');
   const accepted = acceptIndex >= 0 ? events[acceptIndex] : undefined;
-  const proposeIndex = lastIndexOfType(events, 'replan.proposed');
   const resumed = events.some(
     (event, index) => index > chainStart && event.type === 'execution.started',
   );
+  const passIndex = lastIndexOfType(events, 'validation.passed');
+  const passed = passIndex > chainStart ? events[passIndex] : undefined;
 
-  const reason = asString(fail?.payload['reason_summary']) ?? fail?.decision_summary ?? null;
-  const status = fail ? asString(fail.payload['status']) : null;
-  const evidence = fail ? asNumber(fail.payload['evidence_count']) : null;
-  const validationDetail =
-    status !== null || evidence !== null
-      ? [status && `status ${status}`, evidence !== null && `evidence ${evidence}`]
-          .filter(Boolean)
-          .join(' · ')
-      : start?.decision_summary ?? null;
+  const violated = fail ? asStringArray(fail.payload['violated_constraints']) ?? [] : [];
+  const failReason = asString(fail?.payload['reason_summary']) ?? fail?.decision_summary ?? null;
+  const failDetail = violated.length > 0 ? `${violated.join(', ')} violated` : failReason;
 
   const replanCount = start ? asNumber(start.payload['replan_count']) : null;
   const limit = start ? asNumber(start.payload['limit']) : null;
@@ -229,36 +227,131 @@ export function deriveReplanChain(events: readonly EventView[]): ChainStep[] | n
 
   const previous = accepted ? asNumber(accepted.payload['previous_version']) : null;
   const version = accepted ? asNumber(accepted.payload['version']) : null;
-  const newPlanDetail =
+  const revisedDetail =
     previous !== null && version !== null ? `v${previous} → v${version}` : null;
 
-  const states: Array<'done' | 'current' | 'pending'> = [];
-  const doneFlags = [
-    failIndex >= 0,
-    startIndex >= 0,
-    proposeIndex >= 0 || acceptIndex >= 0,
-    acceptIndex >= 0,
-    resumed,
-  ];
+  const satisfied = passed ? asStringArray(passed.payload['satisfied_constraints']) ?? [] : [];
+  const passReason =
+    (passed ? asString(passed.payload['reason_summary']) : null) ??
+    passed?.decision_summary ??
+    null;
+  const passDetail = satisfied.length > 0 ? `${satisfied.join(', ')} satisfied` : passReason;
+
+  const doneFlags = [failIndex >= 0, startIndex >= 0, acceptIndex >= 0, resumed, passed !== undefined];
   let currentFound = false;
-  for (const done of doneFlags) {
-    if (done) {
-      states.push('done');
-    } else if (!currentFound) {
-      states.push('current');
+  const states = doneFlags.map((done): 'done' | 'current' | 'pending' => {
+    if (done) return 'done';
+    if (!currentFound) {
       currentFound = true;
-    } else {
-      states.push('pending');
+      return 'current';
+    }
+    return 'pending';
+  });
+
+  return [
+    { label: 'Validation failed', detail: failDetail, state: states[0] ?? 'pending', tone: 'fail' },
+    { label: 'Orbit adapted', detail: adaptDetail, state: states[1] ?? 'pending', tone: 'adapt' },
+    { label: 'Plan revised', detail: revisedDetail, state: states[2] ?? 'pending', tone: 'adapt' },
+    { label: 'Execution resumed', detail: null, state: states[3] ?? 'pending', tone: 'adapt' },
+    { label: 'Validation passed', detail: passDetail, state: states[4] ?? 'pending', tone: 'pass' },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Plan version history (superseded plans + what the replan changed)
+// ---------------------------------------------------------------------------
+
+export interface PlanRevision {
+  version: number;
+  total: number;
+  /** task.completed events for this plan's task ids while it was current. */
+  completed: number;
+  /** Constraints violated by validation.failed events under this plan. */
+  constraintFailures: number;
+}
+
+export interface AdaptLink {
+  from: number;
+  to: number;
+  preserved: number;
+  revised: number;
+  added: number;
+}
+
+export interface PlanHistory {
+  /** One entry per workflow.planned event, in order (length >= 2). */
+  revisions: PlanRevision[];
+  /** revisions[i] -> revisions[i + 1] (length = revisions.length - 1). */
+  links: AdaptLink[];
+}
+
+/**
+ * Replays plan versions from real events: each workflow.planned opens a
+ * revision, task.completed/validation.failed inside its window count the
+ * work (and constraint failures) done under it, and each replan.accepted
+ * between two revisions supplies preserved_completed — from which preserved
+ * / revised / new counts are derived by set comparison. Null until a second
+ * plan exists. Nothing is invented: absent payloads fall back to set diffs.
+ */
+export function derivePlanHistory(events: readonly EventView[]): PlanHistory | null {
+  const planned: Array<{ index: number; version: number; ids: string[] }> = [];
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i];
+    if (event?.type !== 'workflow.planned') continue;
+    const version = asNumber(event.payload['version']);
+    if (version === null) continue; // a plan without a version is ambiguous
+    const ids = asStringArray(event.payload['task_ids']) ?? [];
+    planned.push({ index: i, version, ids });
+  }
+  if (planned.length < 2) return null;
+
+  const revisions: PlanRevision[] = [];
+  const links: AdaptLink[] = [];
+
+  for (let i = 0; i < planned.length; i += 1) {
+    const current = planned[i];
+    const next = planned[i + 1];
+    if (!current) continue;
+    const end = next ? next.index : events.length;
+
+    let completed = 0;
+    let constraintFailures = 0;
+    for (let j = current.index + 1; j < end; j += 1) {
+      const event = events[j];
+      if (!event) continue;
+      if (event.type === 'task.completed' && event.task_id && current.ids.includes(event.task_id)) {
+        completed += 1;
+      }
+      if (event.type === 'validation.failed') {
+        constraintFailures += asStringArray(event.payload['violated_constraints'])?.length ?? 0;
+      }
+    }
+    revisions.push({
+      version: current.version,
+      total: current.ids.length,
+      completed,
+      constraintFailures,
+    });
+
+    if (next) {
+      let preserved = 0;
+      for (let j = current.index + 1; j < end; j += 1) {
+        const event = events[j];
+        if (event?.type !== 'replan.accepted') continue;
+        preserved = asStringArray(event.payload['preserved_completed'])?.length ?? 0;
+      }
+      const common = current.ids.filter((id) => next.ids.includes(id)).length;
+      links.push({
+        from: current.version,
+        to: next.version,
+        preserved,
+        revised: Math.max(common - preserved, 0),
+        added: next.ids.filter((id) => !current.ids.includes(id)).length,
+      });
     }
   }
 
-  return [
-    { label: 'Constraint failed', detail: reason, state: states[0] ?? 'pending' },
-    { label: 'Validation', detail: validationDetail, state: states[1] ?? 'pending' },
-    { label: 'Adapt', detail: adaptDetail, state: states[2] ?? 'pending' },
-    { label: 'New plan', detail: newPlanDetail, state: states[3] ?? 'pending' },
-    { label: 'Execution resumes', detail: null, state: states[4] ?? 'pending' },
-  ];
+  return { revisions, links };
 }
 
 // ---------------------------------------------------------------------------

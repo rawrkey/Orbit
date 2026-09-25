@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import { ApiError, NetworkError, OrbitClient, toErrorView, type ErrorView } from '../api/client';
+import { DEMO_GOAL } from '../api/demo';
 import type {
   EventView,
   RunWorkflowResponse,
@@ -160,6 +161,7 @@ export interface OrbitController {
   setAnswer: (question: string, value: string) => void;
   create: () => void;
   run: () => void;
+  demo: () => void;
   dismissError: () => void;
   reset: () => void;
 }
@@ -279,20 +281,12 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
   );
   const dismissError = useCallback(() => dispatch({ type: 'ERROR', error: null }), []);
 
-  const create = useCallback((): void => {
-    const current = stateRef.current;
-    const goal = current.goal.trim();
-    if (createLock.current) return;
-    if (goal.length === 0) {
-      dispatch({
-        type: 'ERROR',
-        error: { kind: 'client', message: 'Goal must not be blank.' },
-      });
-      return;
-    }
-    createLock.current = true;
-    dispatch({ type: 'CREATE_START' });
-    void (async () => {
+  /** Create + hydrate. Returns the workflow id, or null on failure/lock. */
+  const createWith = useCallback(
+    async (goal: string): Promise<string | null> => {
+      if (createLock.current) return null;
+      createLock.current = true;
+      dispatch({ type: 'CREATE_START' });
       try {
         const created = await client.createWorkflow(goal);
         window.localStorage.setItem(STORAGE_KEY, created.workflow_id);
@@ -306,36 +300,38 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
           status,
           events: page.events,
         });
+        return created.workflow_id;
       } catch (error) {
         dispatch({ type: 'ERROR', error: toErrorView(error) });
+        return null;
       } finally {
         createLock.current = false;
         dispatch({ type: 'CREATE_END' });
       }
-    })();
-  }, [client]);
+    },
+    [client],
+  );
 
-  const run = useCallback((): void => {
-    const current = stateRef.current;
-    const workflowId = current.workflowId;
-    if (runLock.current || !workflowId) return;
-
-    // Clarification bypass guard: a plain run must never fire while the
-    // backend awaits answers; submitting answers is the only way out.
-    const clarifying = current.status !== null && isClarifying(current.status.state);
-    if (clarifying) {
-      const questions = current.status?.clarification_questions ?? [];
-      if (!allAnswered(questions, current.answers)) return;
+  const create = useCallback((): void => {
+    const goal = stateRef.current.goal.trim();
+    if (goal.length === 0) {
+      dispatch({
+        type: 'ERROR',
+        error: { kind: 'client', message: 'Goal must not be blank.' },
+      });
+      return;
     }
+    void createWith(goal);
+  }, [createWith]);
 
-    runLock.current = true;
-    dispatch({ type: 'RUN_START' });
-    void (async () => {
+  /** Run to a terminal/clarifying state. Duplicate submits are locked out. */
+  const runWith = useCallback(
+    async (workflowId: string, answers?: Record<string, string>): Promise<void> => {
+      if (runLock.current) return;
+      runLock.current = true;
+      dispatch({ type: 'RUN_START' });
       try {
-        const report = await client.runWorkflow(
-          workflowId,
-          clarifying ? current.answers : undefined,
-        );
+        const report = await client.runWorkflow(workflowId, answers);
         dispatch({ type: 'RUN_SUCCESS', report });
         try {
           await refresh(workflowId);
@@ -361,8 +357,40 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
         runLock.current = false;
         dispatch({ type: 'RUN_END' });
       }
+    },
+    [client, refresh],
+  );
+
+  const run = useCallback((): void => {
+    const current = stateRef.current;
+    const workflowId = current.workflowId;
+    if (runLock.current || !workflowId) return;
+
+    // Clarification bypass guard: a plain run must never fire while the
+    // backend awaits answers; submitting answers is the only way out.
+    const clarifying = current.status !== null && isClarifying(current.status.state);
+    if (clarifying) {
+      const questions = current.status?.clarification_questions ?? [];
+      if (!allAnswered(questions, current.answers)) return;
+    }
+
+    void runWith(workflowId, clarifying ? current.answers : undefined);
+  }, [runWith]);
+
+  /**
+   * Demo entry point: fills the canonical backend demo goal, creates the
+   * workflow, and runs it — the ordinary API flow, no fabricated events.
+   * (The offline backend serves the scripted adaptive story for this goal.)
+   */
+  const demo = useCallback((): void => {
+    if (createLock.current || runLock.current) return;
+    if (stateRef.current.workflowId) return;
+    dispatch({ type: 'GOAL', value: DEMO_GOAL });
+    void (async () => {
+      const workflowId = await createWith(DEMO_GOAL);
+      if (workflowId) await runWith(workflowId);
     })();
-  }, [client, refresh]);
+  }, [createWith, runWith]);
 
   const reset = useCallback((): void => {
     window.localStorage.removeItem(STORAGE_KEY);
@@ -385,9 +413,10 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
       setAnswer,
       create,
       run,
+      demo,
       dismissError,
       reset,
     }),
-    [state, setGoal, setAnswer, create, run, dismissError, reset],
+    [state, setGoal, setAnswer, create, run, demo, dismissError, reset],
   );
 }
