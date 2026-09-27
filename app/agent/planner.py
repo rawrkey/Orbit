@@ -15,6 +15,8 @@ does that after the caller receives a validated plan.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Sequence
+
 from app.llm.base import LLMProvider
 from app.state.models import GoalAnalysis, Plan, Task, TaskStatus
 
@@ -44,10 +46,16 @@ Produce a JSON object matching the Plan schema: an ordered "tasks" array.
 Rules:
 - Every task: a stable unique id (e.g. "t1"), a short title, a description,
   expected_output, success_criteria, depends_on (ids of EARLIER tasks),
-  requires_tool (true only when a real tool is needed), tool_hint (the tool
-  family, e.g. "calculator", "file", "web_search" - omit when requires_tool
-  is false), and constraint_ids (ids of constraints from the analysis this
-  task must respect).
+  requires_tool, tool_hint, and constraint_ids (ids of constraints from the
+  analysis this task must respect).
+- requires_tool / tool_hint contract - deterministic validation enforces
+  it and rejects any plan that breaks it:
+  - requires_tool=false -> tool_hint must be null or omitted entirely.
+  - requires_tool=true -> tool_hint is REQUIRED: never null, never an
+    invented or generic name - it must be EXACTLY one registered tool
+    ({available_tools}).
+  - Research, comparison, price, fact-finding, or web tasks need live
+    results: requires_tool=true with tool_hint="web_search".
 - Tasks must be listed in execution order: every dependency appears at a
   lower index than the task that needs it.
 - depends_on may only reference ids present in the same tasks array.
@@ -65,13 +73,22 @@ def validate_plan(
     *,
     analysis: GoalAnalysis | None = None,
     max_tasks: int = DEFAULT_MAX_PLAN_TASKS,
+    available_tools: Collection[str] | None = None,
 ) -> None:
     """Deterministic structural validation of a proposed plan.
 
     Raises ``PlanValidationError`` listing EVERY issue found. This is pure
     structure: no LLM, no network, no state.
+
+    ``available_tools`` (registry tool names) is optional: when given, every
+    non-blank ``tool_hint`` must name one of them, so an invented tool can
+    never reach execution. When omitted (legacy/direct callers), only the
+    structural requires_tool/tool_hint consistency rules apply.
     """
     issues: list[str] = []
+    known_tool_names = (
+        set(available_tools) if available_tools is not None else None
+    )
 
     if not plan.tasks:
         issues.append("plan has no tasks")
@@ -110,6 +127,13 @@ def validate_plan(
             issues.append(
                 f"task {task.id!r} declares a tool_hint but requires_tool "
                 f"is false"
+            )
+        hint = (task.tool_hint or "").strip()
+        if known_tool_names is not None and hint and hint not in known_tool_names:
+            issues.append(
+                f"task {task.id!r} tool_hint {task.tool_hint!r} is not a "
+                f"registered tool (available: "
+                f"{', '.join(sorted(known_tool_names))})"
             )
         if known_constraint_ids is not None:
             for constraint_id in task.constraint_ids:
@@ -180,6 +204,7 @@ class Planner:
         temperature: float = 0.2,
         timeout_s: float = 60.0,
         repair_attempts: int = 1,
+        available_tools: Sequence[str] | None = None,
     ) -> None:
         if max_tasks < 1:
             raise ValueError(f"max_tasks must be >= 1, got {max_tasks}")
@@ -192,6 +217,9 @@ class Planner:
         self._temperature = temperature
         self._timeout_s = timeout_s
         self._repair_attempts = repair_attempts
+        self._available_tools = (
+            tuple(available_tools) if available_tools is not None else None
+        )
 
     async def plan(
         self,
@@ -240,7 +268,10 @@ class Planner:
             )
             try:
                 validate_plan(
-                    plan, analysis=analysis, max_tasks=self._max_tasks
+                    plan,
+                    analysis=analysis,
+                    max_tasks=self._max_tasks,
+                    available_tools=self._available_tools,
                 )
                 return plan
             except PlanValidationError as error:
@@ -250,7 +281,16 @@ class Planner:
         raise last_error
 
     def _system_prompt(self) -> str:
-        return PLANNER_SYSTEM_PROMPT.format(max_tasks=self._max_tasks)
+        return PLANNER_SYSTEM_PROMPT.format(
+            max_tasks=self._max_tasks,
+            available_tools=self._tool_list_clause(),
+        )
+
+    def _tool_list_clause(self) -> str:
+        """Render the registered tool names (or a neutral fallback)."""
+        if self._available_tools:
+            return ", ".join(repr(name) for name in self._available_tools)
+        return "any tool registered in this runtime"
 
     def _build_prompt(
         self,
@@ -268,6 +308,11 @@ class Planner:
             "Analysis summary: " + analysis.reason_summary,
             "Available constraint ids: " + constraint_ids,
         ]
+        if self._available_tools:
+            parts.append(
+                "Registered tools (the only valid tool_hint values): "
+                + ", ".join(self._available_tools)
+            )
         if clarifications:
             parts += [
                 "",

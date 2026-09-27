@@ -44,6 +44,7 @@ from app.state.models import (
     ValidationResult,
     ValidationStatus,
     Workflow,
+    observations_by_task,
 )
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "ValidatorError",
     "evaluate_rule",
     "extract_number",
+    "observations_by_task",
     "validate_result_consistency",
 ]
 
@@ -186,32 +188,6 @@ def validate_result_consistency(
 # ---------------------------------------------------------------------------
 # Evidence resolution
 # ---------------------------------------------------------------------------
-
-
-def _observations_by_task(workflow: Workflow) -> dict[str, Observation]:
-    """Latest valid observation per task.
-
-    - latest-wins: after a replan a task may have run several times and only
-      the most recent result reflects current state
-    - version safety: an observation stamped with an OLD task definition
-      fingerprint is stale evidence and is skipped, so evidence produced by a
-      pre-replan definition can never satisfy the redefined task. Observations
-      without a stamp (``None`` - e.g. legacy/fixtures) stay usable.
-    """
-    current = (
-        {task.id: task.definition_fingerprint() for task in workflow.plan.tasks}
-        if workflow.plan is not None
-        else {}
-    )
-    by_task: dict[str, Observation] = {}
-    for observation in workflow.observations:
-        stamped = observation.task_fingerprint
-        if stamped is not None:
-            expected = current.get(observation.task_id)
-            if expected is not None and stamped != expected:
-                continue  # stale evidence from an older task definition
-        by_task[observation.task_id] = observation
-    return by_task
 
 
 def _existing_evidence(
@@ -357,7 +333,7 @@ class Validator:
         analysis: GoalAnalysis,
         proposal: ValidationProposal,
     ) -> ValidationResult:
-        by_task = _observations_by_task(workflow)
+        by_task = observations_by_task(workflow)
         observed_tasks = set(by_task)
 
         verdicts = {}

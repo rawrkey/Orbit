@@ -1,6 +1,9 @@
 """Environment-driven configuration.
 
 Values are read from environment variables with sensible defaults.
+When the real environment is read (``load_settings()`` with no argument),
+a project-root ``.env`` file is honored as documented in ``.env.example``:
+the real environment always wins, ``.env`` only fills in what is missing.
 No API key is required to run Phase 1/2 code or the test suite.
 """
 
@@ -46,9 +49,9 @@ class Settings:
     workspace_dir: Path = Path("workspace")
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
 
-    # Web search (real provider arrives in a later phase)
+    # Web search (LangSearch provider; disabled cleanly when no key is set)
     web_search_provider: str = DEFAULT_WEB_SEARCH_PROVIDER
-    web_search_api_key: str | None = None
+    web_search_api_key: str | None = None  # LANGSEARCH_API_KEY (or legacy alias)
     web_search_endpoint: str | None = None
 
     log_level: str = "INFO"
@@ -88,13 +91,60 @@ def _read_float(env: Mapping[str, str], key: str, default: float) -> float:
         raise ValueError(f"{key} must be a number, got {raw!r}") from exc
 
 
+def _project_env_file() -> Path:
+    """Project-root ``.env`` (the file README tells you to copy)."""
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    """Minimal ``.env`` reader (stdlib only - no added dependency).
+
+    Supports ``KEY=VALUE`` lines, an optional ``export`` prefix, surrounding
+    quotes, ``#`` comments, and blank lines. Malformed lines are skipped;
+    value validity is enforced later by the explicit typed readers.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
-    """Load settings from ``env`` (defaults to ``os.environ``).
+    """Load settings from ``env`` (defaults to the real environment).
+
+    When ``env`` is omitted, the project-root ``.env`` file is merged in
+    first and the real environment wins on conflicts - so configuration
+    written to ``.env`` is actually honored. Passing an explicit mapping
+    (as tests do) reads only that mapping and never touches ``.env``.
 
     Fails explicitly on malformed values instead of silently guessing.
     An API key is optional: it is never required to run tests.
     """
-    source = os.environ if env is None else env
+    if env is None:
+        source: Mapping[str, str] = {
+            **_read_env_file(_project_env_file()),
+            **os.environ,
+        }
+    else:
+        source = env
 
     settings = Settings(
         openrouter_api_key=_read_optional_str(source, "OPENROUTER_API_KEY"),
@@ -114,7 +164,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         web_search_provider=_read_str(
             source, "WEB_SEARCH_PROVIDER", DEFAULT_WEB_SEARCH_PROVIDER
         ).lower(),
-        web_search_api_key=_read_optional_str(source, "WEB_SEARCH_API_KEY"),
+        web_search_api_key=_read_optional_str(source, "LANGSEARCH_API_KEY")
+        or _read_optional_str(source, "WEB_SEARCH_API_KEY"),
         web_search_endpoint=_read_optional_str(source, "WEB_SEARCH_ENDPOINT"),
         log_level=_read_str(source, "LOG_LEVEL", "INFO").upper(),
     )

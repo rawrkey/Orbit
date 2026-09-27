@@ -1,13 +1,14 @@
 """Web search tool: real interface, no fake results.
 
-Phase 2 ships the contract and configuration only. When no search provider
-is configured, the tool fails with ``WebSearchUnavailableError`` - it NEVER
-fabricates results. Real providers (Brave, Serper, ...) plug into the
-``SearchProvider`` protocol in a later phase.
+The tool delegates to a configured ``SearchProvider``. Without a provider it
+fails with ``WebSearchUnavailableError`` - it NEVER fabricates results.
+Real providers (see ``app.tools.search_providers``) plug into the
+``SearchProvider`` protocol and are routed from configuration in
+``app.tools.builtin.create_search_provider``.
 
 Dependency note: free/public search libraries were deliberately not added to
-keep the dependency budget at pydantic + httpx; a provider built on httpx
-can be added later without new dependencies.
+keep the dependency budget at pydantic + httpx; real providers are built on
+httpx with no extra dependencies.
 """
 
 from __future__ import annotations
@@ -19,12 +20,23 @@ from pydantic import BaseModel, Field
 from app.tools.base import Tool, WebSearchUnavailableError
 
 __all__ = [
+    "MAX_RESULT_SNIPPET_CHARS",
+    "MAX_RESULT_SOURCE_CHARS",
+    "MAX_RESULT_TITLE_CHARS",
+    "MAX_RESULT_URL_CHARS",
     "SearchProvider",
     "SearchResult",
     "WebSearchInput",
     "WebSearchOutput",
     "WebSearchTool",
 ]
+
+MAX_RESULT_TITLE_CHARS = 200
+MAX_RESULT_URL_CHARS = 500
+MAX_RESULT_SNIPPET_CHARS = 300
+MAX_RESULT_SOURCE_CHARS = 100
+"""Hard bounds on one normalized result (defense in depth: the producing
+provider truncates first, the schema guarantees it)."""
 
 
 class WebSearchInput(BaseModel):
@@ -35,11 +47,17 @@ class WebSearchInput(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """One search result. Only produced by a real provider."""
+    """One search result. Only produced by a real provider.
 
-    title: str
-    url: str
-    snippet: str = ""
+    Deliberately narrow: title/url/snippet/source are the ONLY fields that
+    ever enter workflow state, so arbitrary provider JSON can never flow
+    through the agent. Lengths are bounded by the producing provider.
+    """
+
+    title: str = Field(max_length=MAX_RESULT_TITLE_CHARS)
+    url: str = Field(max_length=MAX_RESULT_URL_CHARS)
+    snippet: str = Field(default="", max_length=MAX_RESULT_SNIPPET_CHARS)
+    source: str = Field(default="", max_length=MAX_RESULT_SOURCE_CHARS)
 
 
 class WebSearchOutput(BaseModel):
@@ -94,9 +112,9 @@ class WebSearchTool(Tool):
         assert isinstance(arguments, WebSearchInput)
         if self._provider is None:
             raise WebSearchUnavailableError(
-                "web search is not configured. Set WEB_SEARCH_PROVIDER to "
-                "enable a real search provider (Phase 2 supports 'none'; "
-                "real providers arrive in a later phase).",
+                "web search is not configured. Set WEB_SEARCH_PROVIDER to a "
+                "supported provider (e.g. 'langsearch') and "
+                "LANGSEARCH_API_KEY to enable real search.",
                 tool_name=self.name,
             )
         results = self._provider.search(arguments.query, arguments.max_results)

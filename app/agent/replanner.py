@@ -28,6 +28,8 @@ work is preserved (the Controller keeps their COMPLETED status).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from app.llm.base import LLMProvider
 from app.state.models import (
     GoalAnalysis,
@@ -109,8 +111,9 @@ Rules:
   in this plan and listed earlier, status "pending".
 - Reference constraint ids from the analysis on tasks that must respect
   them (especially the violated ones).
-- If a tool is needed: requires_tool=true plus a tool_hint drawn from
-  available_tools; otherwise requires_tool=false.
+- If a tool is needed: requires_tool=true plus a tool_hint that is
+  EXACTLY one registered tool ({available_tools}) - never null, never an
+  invented name; otherwise requires_tool=false and tool_hint null.
 - At most {max_tasks} tasks total. success_criteria must be concrete.
 - No chain-of-thought. reason text is not part of the Plan schema.
 """
@@ -127,6 +130,7 @@ class Replanner:
         temperature: float = 0.2,
         timeout_s: float = 60.0,
         repair_attempts: int = 1,
+        available_tools: Sequence[str] | None = None,
     ) -> None:
         if max_tasks < 1:
             raise ValueError(f"max_tasks must be >= 1, got {max_tasks}")
@@ -137,6 +141,15 @@ class Replanner:
         self._temperature = temperature
         self._timeout_s = timeout_s
         self._repair_attempts = repair_attempts
+        self._available_tools = (
+            tuple(available_tools) if available_tools is not None else None
+        )
+
+    def _tool_list_clause(self) -> str:
+        """Render the registered tool names (or a neutral fallback)."""
+        if self._available_tools:
+            return ", ".join(repr(name) for name in self._available_tools)
+        return "any tool registered in this runtime"
 
     async def propose(
         self, workflow: Workflow, result: ValidationResult
@@ -181,7 +194,10 @@ class Replanner:
             proposal = await self._provider.complete(
                 prompt,
                 Plan,
-                system=REPLANNER_SYSTEM_PROMPT.format(max_tasks=self._max_tasks),
+                system=REPLANNER_SYSTEM_PROMPT.format(
+                    max_tasks=self._max_tasks,
+                    available_tools=self._tool_list_clause(),
+                ),
                 temperature=self._temperature,
                 timeout_s=self._timeout_s,
             )
@@ -209,7 +225,10 @@ class Replanner:
         issues: list[str] = []
         try:
             validate_plan(
-                proposal, analysis=analysis, max_tasks=self._max_tasks
+                proposal,
+                analysis=analysis,
+                max_tasks=self._max_tasks,
+                available_tools=self._available_tools,
             )
         except PlanValidationError as error:
             issues.extend(error.issues)

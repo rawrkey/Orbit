@@ -47,11 +47,22 @@ class TaskResult(LLMDecision):
     """Structured outcome of a reasoning-only task (no tool involved).
 
     ``reason_summary`` is the concise summary of what was determined and
-    ``data`` is any structured result. The Observer converts this into an
-    Observation; raw model prose is never stored as workflow state.
+    ``data`` is any structured result. When the task's dependency evidence
+    does not contain the needed facts, ``data`` MUST be an explicit
+    ``{"insufficient_evidence": true, "reason": ...}`` marker instead of
+    invented values - absence of evidence is never fabricated into a
+    result. The Observer converts this into an Observation; raw model
+    prose is never stored as workflow state.
     """
 
-    data: JsonValue | None = None
+    data: JsonValue | None = Field(
+        default=None,
+        description=(
+            "Structured result of the task, or an explicit "
+            '{"insufficient_evidence": true, "reason": ...} marker when '
+            "dependency_evidence lacks the required facts"
+        ),
+    )
 
 
 class ConstraintVerdict(BaseModel):

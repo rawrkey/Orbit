@@ -26,6 +26,10 @@ __all__ = [
     "ToolExecutionError",
     "ToolSpec",
     "ToolTimeoutError",
+    "WebSearchAuthError",
+    "WebSearchProviderError",
+    "WebSearchResponseError",
+    "WebSearchTimeoutError",
     "WebSearchUnavailableError",
 ]
 
@@ -69,6 +73,26 @@ class DestinationExistsError(ToolError):
 
 class WebSearchUnavailableError(ToolError):
     """Web search was requested but no search provider is configured."""
+
+
+class WebSearchProviderError(ToolError):
+    """The configured search provider failed (transport, rate limit, HTTP 5xx).
+
+    Base class of the provider-specific failures below. Messages are always
+    sanitized by the provider: they never contain credentials.
+    """
+
+
+class WebSearchTimeoutError(WebSearchProviderError):
+    """The provider did not answer within the bounded HTTP timeout."""
+
+
+class WebSearchAuthError(WebSearchProviderError):
+    """The provider rejected the configured credentials (HTTP 401/403)."""
+
+
+class WebSearchResponseError(WebSearchProviderError):
+    """The provider returned a malformed, oversized, or rejected response."""
 
 
 class ToolSpec(BaseModel):

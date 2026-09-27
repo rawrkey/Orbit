@@ -39,11 +39,13 @@ from app.state.models import (
     FailureContext,
     JsonValue,
     Observation,
+    ObservationSource,
     Plan,
     Task,
     TaskStatus,
     Workflow,
     WorkflowState,
+    observations_by_task,
 )
 from app.tools.base import MalformedToolInputError, ToolSpec
 from app.tools.decision import resolve_tool_decision
@@ -51,7 +53,11 @@ from app.tools.execution import execute_tool_call
 from app.tools.registry import ToolNotFoundError, ToolRegistry
 
 __all__ = [
+    "MAX_EVIDENCE_CHARS_PER_RECORD",
+    "MAX_EVIDENCE_RECORDS",
+    "MAX_EVIDENCE_TOTAL_CHARS",
     "MAX_PREVIOUS_OBSERVATIONS",
+    "EvidenceRecord",
     "ExecutionContext",
     "ExecutionError",
     "ExecutionReport",
@@ -60,11 +66,22 @@ __all__ = [
     "Executor",
     "ObservationDigest",
     "build_execution_context",
+    "build_dependency_evidence",
     "select_next_task",
 ]
 
 MAX_PREVIOUS_OBSERVATIONS = 5
 """How many prior observations are exposed to the LLM (bounded context)."""
+
+MAX_EVIDENCE_RECORDS = 5
+"""How many dependency observations carry structured evidence into context."""
+
+MAX_EVIDENCE_CHARS_PER_RECORD = 4096
+"""Serialized cap on one evidence record's data (matches the validator's
+per-observation raw view cutoff)."""
+
+MAX_EVIDENCE_TOTAL_CHARS = 8_000
+"""Serialized cap on ALL evidence handed to one task's context."""
 
 # Task statuses that count as executed for dependency purposes.
 _SATISFIED: frozenset[TaskStatus] = frozenset(
@@ -141,6 +158,176 @@ class ObservationDigest(BaseModel):
     is_error: bool = False
 
 
+class EvidenceRecord(BaseModel):
+    """Structured output of ONE dependency task, bounded for the LLM.
+
+    Carries the observation's ``raw`` payload so downstream tasks can
+    consume real predecessor data instead of a one-line summary. Search
+    evidence (web_search) is represented as an ordered list of COMPLETE
+    result records - each keeping its title/url/snippet/source whole -
+    plus a deterministic ``results_omitted`` count when the bounds stop
+    the fill; a result is either fully present or absent, never cut
+    midway. Never contains prompts, chain-of-thought, or keys - only
+    what the Observer stored.
+    """
+
+    task_id: str = Field(min_length=1, max_length=64)
+    source: ObservationSource
+    tool_name: str | None = Field(default=None, max_length=120)
+    data: JsonValue
+    truncated: bool = False
+
+
+def _dependency_closure(plan: Plan, task: Task) -> list[str]:
+    """Transitive dependency ids of ``task``, in plan order (deterministic).
+
+    Unknown dependency ids are ignored (plan validation rejects them
+    upstream) and the visited set makes this safe on any cycle.
+    """
+    deps_by_id = {candidate.id: set(candidate.depends_on) for candidate in plan.tasks}
+    seen: set[str] = set()
+    frontier = list(task.depends_on)
+    while frontier:
+        dep = frontier.pop()
+        if dep in seen:
+            continue
+        seen.add(dep)
+        frontier.extend(deps_by_id.get(dep, ()))
+    return [candidate.id for candidate in plan.tasks if candidate.id in seen]
+
+
+def _is_search_evidence(raw: JsonValue) -> bool:
+    """True for search-style evidence: a dict with a list of result records.
+
+    Detected by the WebSearchOutput SHAPE, never by a hardcoded tool name -
+    the executor stays tool-agnostic - so complete result records can be
+    fitted whole instead of char-sliced.
+    """
+    return (
+        isinstance(raw, dict)
+        and isinstance(raw.get("results"), list)
+        and all(isinstance(item, dict) for item in raw["results"])
+    )
+
+
+def _fit_search_data(raw: dict, budget: int) -> tuple[dict, bool] | None:
+    """Fit COMPLETE search results into ``budget`` chars (deterministic).
+
+    Results are added whole, in order: a result record either appears with
+    every field (title/url/snippet/source) intact or not at all - the cut
+    always falls BETWEEN records, never inside one. The first result that
+    does not fit stops the fill; the rest are reported in
+    ``results_omitted``. Returns ``(data, truncated)``, or ``None`` when
+    the budget cannot hold even one result (the caller falls back to the
+    generic preview truncation, so limits are still enforced).
+    """
+    header = {key: value for key, value in raw.items() if key != "results"}
+    results = raw["results"]
+    kept: list[JsonValue] = []
+    stopped = False
+    for item in results:
+        if not stopped and isinstance(item, dict):
+            trial = json.dumps({**header, "results": [*kept, item]}, ensure_ascii=False)
+            if len(trial) <= budget:
+                kept.append(item)
+                continue
+        stopped = True  # first unusable or oversized item ends the fill
+    if results and not kept:
+        return None
+    dropped = len(results) - len(kept)
+    data: dict = {**header, "results": kept}
+    if dropped:
+        data["results_omitted"] = dropped
+        # the marker costs chars too: keep dropping WHOLE tail results (never
+        # partial ones) until the record fits, else nothing viable remains
+        while kept and len(json.dumps(data, ensure_ascii=False)) > budget:
+            kept.pop()
+            dropped = len(results) - len(kept)
+            data = {**header, "results": kept, "results_omitted": dropped}
+        if not kept:
+            return None
+    return data, bool(dropped)
+
+
+def build_dependency_evidence(
+    workflow: Workflow,
+    task: Task,
+    *,
+    max_records: int = MAX_EVIDENCE_RECORDS,
+    max_chars_per_record: int = MAX_EVIDENCE_CHARS_PER_RECORD,
+    max_total_chars: int = MAX_EVIDENCE_TOTAL_CHARS,
+) -> tuple[list[EvidenceRecord], int]:
+    """Bounded, dependency-scoped structured evidence for one task.
+
+    Only the transitive ``depends_on`` closure of ``task`` contributes -
+    unrelated observations never enter (the digests in
+    ``previous_observations`` stay the only cross-branch awareness). Each
+    record comes from the freshness rule shared with the Validator
+    (``observations_by_task``: latest wins, stale fingerprints skipped),
+    so evidence survives replans that preserve the producing task and is
+    dropped when that task is redefined.
+
+    Bounding (all deterministic): search evidence keeps as many COMPLETE
+    result records as fit in ``min(max_chars_per_record, remaining total
+    budget)``; non-search payloads keep the existing preview truncation.
+    Records that cannot fit are omitted whole and counted.
+
+    Returns ``(records, omitted_count)`` where ``omitted_count`` is the
+    number of usable dependency observations that did not fit the bounds.
+    """
+    plan = workflow.plan
+    if plan is None:
+        return [], 0
+    closure = _dependency_closure(plan, task)
+    if not closure:
+        return [], 0
+
+    fresh = observations_by_task(workflow)
+    records: list[EvidenceRecord] = []
+    omitted = 0
+    total_chars = 0
+    for dep_id in closure:
+        observation = fresh.get(dep_id)
+        if observation is None or observation.is_error or observation.raw is None:
+            continue
+        if len(records) >= max_records:
+            omitted += 1
+            continue
+        raw = observation.raw
+        data: JsonValue = raw
+        text = json.dumps(data, ensure_ascii=False)
+        truncated = False
+        if _is_search_evidence(raw):
+            assert isinstance(raw, dict)  # guaranteed by _is_search_evidence
+            budget = min(max_chars_per_record, max_total_chars - total_chars)
+            fitted = _fit_search_data(raw, budget)
+            if fitted is not None:
+                data, truncated = fitted
+                text = json.dumps(data, ensure_ascii=False)
+        if len(text) > max_chars_per_record:
+            truncated = True
+            data = {
+                "truncated": True,
+                "original_chars": len(text),
+                "preview": text[: max_chars_per_record - 100],
+            }
+            text = json.dumps(data, ensure_ascii=False)
+        if total_chars + len(text) > max_total_chars:
+            omitted += 1
+            continue
+        records.append(
+            EvidenceRecord(
+                task_id=observation.task_id,
+                source=observation.source,
+                tool_name=observation.tool_name,
+                data=data,
+                truncated=truncated,
+            )
+        )
+        total_chars += len(text)
+    return records, omitted
+
+
 class ExecutionContext(BaseModel):
     """Structured, bounded context handed to the LLM for one task.
 
@@ -152,6 +339,8 @@ class ExecutionContext(BaseModel):
     constraints: list[Constraint] = Field(default_factory=list)
     task: Task
     previous_observations: list[ObservationDigest] = Field(default_factory=list)
+    dependency_evidence: list[EvidenceRecord] = Field(default_factory=list)
+    evidence_omitted: int = Field(default=0, ge=0)
     available_tools: list[ToolSpec] = Field(default_factory=list)
 
 
@@ -184,12 +373,16 @@ def build_execution_context(
         if obs.task_id != task.id
     ][-max_observations:]
 
+    evidence, evidence_omitted = build_dependency_evidence(workflow, task)
+
     return ExecutionContext(
         goal=workflow.goal,
         objective=objective,
         constraints=constraints,
         task=task,
         previous_observations=previous,
+        dependency_evidence=evidence,
+        evidence_omitted=evidence_omitted,
         available_tools=registry.list_tools(),
     )
 
@@ -203,9 +396,11 @@ You choose exactly one tool for the current task in an adaptive workflow agent.
 Respond with a single JSON object matching the ToolDecision schema:
 {"tool_name": <string>, "arguments": <object>, "reason_summary": <string>}.
 Pick the tool ONLY from available_tools in the execution context. Arguments
-must satisfy that tool's input schema. reason_summary is a single concise
-sentence - never chain-of-thought. If no available tool fits, choose the
-closest capable tool and explain briefly.
+must satisfy that tool's input schema. dependency_evidence holds the bounded
+structured outputs of this task's dependencies (e.g. prior search results) -
+use it to refine arguments instead of repeating a verbatim dependency query.
+reason_summary is a single concise sentence - never chain-of-thought. If no
+available tool fits, choose the closest capable tool and explain briefly.
 """
 
 REASONING_SYSTEM = """\
@@ -215,6 +410,12 @@ Respond with a single JSON object matching the TaskResult schema:
 reason_summary states what was determined, in one concise sentence (max 500
 characters). data holds any structured result. Never output chain-of-thought.
 Base the result only on the execution context - never invent tool output.
+dependency_evidence holds the structured outputs of this task's dependencies;
+use those facts, never guesses. If the needed facts are NOT in the evidence
+(or dependency_evidence is empty), return
+data = {"insufficient_evidence": true, "reason": <string>} and say so in
+reason_summary - missing evidence must surface as insufficient, never as an
+invented number, spec, quote, or source.
 """
 
 

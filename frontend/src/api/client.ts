@@ -116,8 +116,12 @@ export class OrbitClient {
     return (await response.json()) as T;
   }
 
-  async createWorkflow(goal: string): Promise<CreateWorkflowResponse> {
-    const body: CreateWorkflowRequest = { goal };
+  async createWorkflow(
+    goal: string,
+    options: { demo?: boolean } = {},
+  ): Promise<CreateWorkflowResponse> {
+    // The demo flag is opt-in only: normal creation sends exactly { goal }.
+    const body: CreateWorkflowRequest = options.demo ? { goal, demo: true } : { goal };
     return this.request<CreateWorkflowResponse>('/workflows', {
       method: 'POST',
       body: JSON.stringify(body),

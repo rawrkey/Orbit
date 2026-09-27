@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # JSON-compatible value types (explicit, not dict[str, Any])
@@ -207,6 +207,41 @@ class GoalAnalysis(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _task_llm_schema(schema: dict) -> None:
+    """Make the requires_tool/tool_hint contract STRUCTURAL in the JSON schema.
+
+    This schema is what the planner actually sends to the LLM (both in the
+    system message and in ``response_format``). Structured-output decoding
+    reliably emits ``required`` keys but drops optional nullable fields no
+    matter how explicit the prose prompt is - live Nemotron runs returned
+    ``requires_tool=true`` with the ``tool_hint`` key absent every time.
+    So the contract is expressed where the decoder sees it:
+
+    - ``tool_hint`` is always a required key (``null`` when no tool is
+      needed - validation still rejects any non-null hint with
+      requires_tool=false and any missing hint with requires_tool=true)
+    - when ``requires_tool`` is true, ``tool_hint`` must be a string
+      (``if``/``then`` - never null, never omitted)
+    """
+
+    required = schema.setdefault("required", [])
+    if "tool_hint" not in required:
+        required.append("tool_hint")
+    schema.setdefault("allOf", []).append(
+        {
+            "if": {
+                "type": "object",
+                "properties": {"requires_tool": {"const": True}},
+                "required": ["requires_tool"],
+            },
+            "then": {
+                "required": ["tool_hint"],
+                "properties": {"tool_hint": {"type": "string"}},
+            },
+        }
+    )
+
+
 class Task(BaseModel):
     """One step of a plan. Data only; execution lives elsewhere.
 
@@ -214,12 +249,27 @@ class Task(BaseModel):
     via ``depends_on`` (validated structurally by the planner).
     """
 
+    model_config = ConfigDict(json_schema_extra=_task_llm_schema)
+
     id: str = Field(min_length=1, default_factory=_short_id)
     title: str | None = Field(default=None, max_length=200)
     description: str = Field(min_length=1)
-    tool_hint: str | None = None
+    tool_hint: str | None = Field(
+        default=None,
+        description=(
+            "Registered tool name to use for this task (e.g. 'web_search'). "
+            "REQUIRED and non-null when requires_tool is true; must be null "
+            "or omitted when requires_tool is false."
+        ),
+    )
     input_hint: str | None = None
-    requires_tool: bool = False
+    requires_tool: bool = Field(
+        default=False,
+        description=(
+            "True only when the task genuinely needs a real tool. When true, "
+            "tool_hint is required and must name a registered tool."
+        ),
+    )
     expected_output: str | None = Field(default=None, max_length=500)
     constraint_ids: list[str] = Field(default_factory=list)
     success_criteria: str = Field(min_length=1)
@@ -472,3 +522,35 @@ class Workflow(BaseModel):
     event_count: int = Field(default=0, ge=0)
     final_answer: str | None = None
     failure: FailureContext | None = None
+
+
+def observations_by_task(workflow: Workflow) -> dict[str, Observation]:
+    """Latest valid observation per task (the freshness rule).
+
+    Shared by the Validator (evidence resolution) and the Executor
+    (dependency evidence): both must agree on which observation is current,
+    so a replanned workflow can never be judged on - or reason from - stale
+    data.
+
+    - latest-wins: after a replan a task may have run several times and only
+      the most recent result reflects current state
+    - version safety: an observation stamped with an OLD task definition
+      fingerprint is stale evidence and is skipped, so evidence produced by a
+      pre-replan definition can never satisfy (or inform) the redefined task.
+      Observations without a stamp (``None`` - e.g. legacy/fixtures) stay
+      usable.
+    """
+    current = (
+        {task.id: task.definition_fingerprint() for task in workflow.plan.tasks}
+        if workflow.plan is not None
+        else {}
+    )
+    by_task: dict[str, Observation] = {}
+    for observation in workflow.observations:
+        stamped = observation.task_fingerprint
+        if stamped is not None:
+            expected = current.get(observation.task_id)
+            if expected is not None and stamped != expected:
+                continue  # stale evidence from an older task definition
+        by_task[observation.task_id] = observation
+    return by_task

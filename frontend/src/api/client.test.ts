@@ -21,7 +21,24 @@ describe('OrbitClient requests', () => {
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0]?.url).toBe('/workflows');
     expect(mock.calls[0]?.method).toBe('POST');
+    // normal creation sends exactly the goal - no demo flag
     expect(mock.calls[0]?.body).toEqual({ goal: 'Find options under 8000.' });
+  });
+
+  it('POSTs /workflows with demo: true only when explicitly requested', async () => {
+    const mock = installFetch(() => json({ workflow_id: 'wf1', state: 'RECEIVED' }, 201));
+    await client.createWorkflow('Find options under a budget of ₹8,000.', {
+      demo: true,
+    });
+    expect(mock.calls[0]?.body).toEqual({
+      goal: 'Find options under a budget of ₹8,000.',
+      demo: true,
+    });
+
+    // demo: false never rides along on the wire
+    const mock2 = installFetch(() => json({ workflow_id: 'wf2', state: 'RECEIVED' }, 201));
+    await client.createWorkflow('Find options under 8000.', { demo: false });
+    expect(mock2.calls[0]?.body).toEqual({ goal: 'Find options under 8000.' });
   });
 
   it('GETs /workflows/{id}', async () => {

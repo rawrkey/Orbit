@@ -77,12 +77,13 @@ describe('demo entry point', () => {
     // completed via backend status; adaptive loop + plan history on screen
     await screen.findByTestId('result-panel');
 
-    // the real API flow used the backend's own demo goal, exactly once
+    // the real API flow used the backend's own demo goal, exactly once,
+    // with the EXPLICIT demo flag so the backend serves the scripted run
     const creates = mock.calls.filter(
       (call) => call.url === '/workflows' && call.method === 'POST',
     );
     expect(creates).toHaveLength(1);
-    expect(creates[0]?.body).toEqual({ goal: DEMO_GOAL });
+    expect(creates[0]?.body).toEqual({ goal: DEMO_GOAL, demo: true });
     expect(mock.callsTo('/run')).toHaveLength(1);
 
     expect(screen.getByTestId('state-value')).toHaveTextContent('Completed (COMPLETED)');

@@ -13,7 +13,15 @@ is a programming error -> 500. Responses never contain raw observation
 payloads, prompts, API keys, or chain-of-thought.
 
 Provider policy: OpenRouter when ``OPENROUTER_API_KEY`` is configured,
-otherwise the offline scripted demo provider - no key is ever required.
+otherwise the offline scripted demo provider - but only when NOTHING is
+configured. With web search explicitly enabled, silently replaying the
+scripted demo would hide a missing ``OPENROUTER_API_KEY``, so that is an
+explicit configuration error instead.
+
+Demo mode: ``POST /workflows`` accepts an optional ``demo`` flag. Only a
+workflow created with ``demo: true`` runs on the scripted offline demo
+provider; every other workflow uses the provider-selection rules above
+with no silent fallback and no change to the real path.
 """
 
 from __future__ import annotations
@@ -50,10 +58,23 @@ __all__ = ["build_provider", "create_app"]
 
 
 def build_provider() -> LLMProvider:
-    """Real provider when a key is configured, else the offline demo scripts."""
+    """Real provider when a key is configured, else the offline demo scripts.
+
+    The scripted demo is the OFFLINE fallback: it runs only when nothing is
+    configured. If web search is explicitly configured, replaying the demo
+    budget scenario would silently swallow real intent to search - a missing
+    LLM key must then be reported explicitly instead of faking a workflow.
+    """
     settings = load_settings()
     if settings.openrouter_api_key:
         return OpenRouterProvider.from_settings(settings)
+    if (settings.web_search_provider or "none").strip().lower() not in ("", "none"):
+        raise ValueError(
+            "OPENROUTER_API_KEY is not configured, but web search is enabled "
+            f"({settings.web_search_provider}): a real LLM is required to use "
+            "it. Set OPENROUTER_API_KEY to run real workflows, or set "
+            "WEB_SEARCH_PROVIDER=none to run the offline scripted demo."
+        )
     return create_demo_provider()
 
 
@@ -71,15 +92,30 @@ def create_app(
     controller = WorkflowController(
         state_store, max_replans=resolved_settings.max_replans
     )
-    orchestrator = WorkflowOrchestrator(
-        controller,
-        GoalAnalyzer(llm),
-        Planner(llm, max_tasks=resolved_settings.max_plan_tasks),
-        Executor(controller, llm, registry),
-        Validator(llm),
-        Replanner(llm),
-        synthesizer=Synthesizer(llm),
-    )
+
+    def build_orchestrator(stage_llm: LLMProvider) -> WorkflowOrchestrator:
+        return WorkflowOrchestrator(
+            controller,
+            GoalAnalyzer(stage_llm),
+            Planner(
+                stage_llm,
+                max_tasks=resolved_settings.max_plan_tasks,
+                available_tools=registry.names(),
+            ),
+            Executor(controller, stage_llm, registry),
+            Validator(stage_llm),
+            Replanner(stage_llm, available_tools=registry.names()),
+            synthesizer=Synthesizer(stage_llm),
+        )
+
+    # The real workflow path: the configured provider (OpenRouter when a
+    # key exists, the offline fallback only when nothing is configured).
+    orchestrator = build_orchestrator(llm)
+    # Explicit demo path: the existing scripted demo provider, selected
+    # ONLY for workflows created with demo=true. Same controller, same
+    # tools, same pipeline - just the scripted LLM for that workflow.
+    demo_orchestrator = build_orchestrator(create_demo_provider())
+    demo_workflows: set[str] = set()
 
     app = FastAPI(
         title="ORBIT",
@@ -113,6 +149,10 @@ def create_app(
     )
     def create_workflow(body: CreateWorkflowRequest) -> CreateWorkflowResponse:
         workflow = controller.create_workflow(body.goal)
+        if body.demo:
+            # Explicit opt-in only: this workflow is routed to the scripted
+            # demo provider at run time. Nothing else changes for it.
+            demo_workflows.add(workflow.id)
         return CreateWorkflowResponse(
             workflow_id=workflow.id, state=workflow.state
         )
@@ -128,7 +168,12 @@ def create_app(
         workflow_id: str, body: RunWorkflowRequest | None = None
     ) -> RunWorkflowResponse:
         answers = body.answers if body is not None else None
-        report = await orchestrator.run(workflow_id, answers=answers)
+        target = (
+            demo_orchestrator
+            if workflow_id in demo_workflows
+            else orchestrator
+        )
+        report = await target.run(workflow_id, answers=answers)
         return RunWorkflowResponse(
             workflow_id=report.workflow_id,
             success=report.success,

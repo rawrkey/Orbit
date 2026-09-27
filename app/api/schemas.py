@@ -34,9 +34,17 @@ __all__ = [
 
 
 class CreateWorkflowRequest(BaseModel):
-    """POST body for submitting a new goal."""
+    """POST body for submitting a new goal.
+
+    ``demo`` is the explicit offline-demo signal: when ``true``, THIS
+    workflow runs on the scripted demo provider. It is optional and
+    defaults to ``false`` - normal creation omits it and keeps the
+    standard provider-selection rules. The response never reveals which
+    provider was selected.
+    """
 
     goal: str = Field(min_length=1, max_length=4000)
+    demo: bool = False
 
     @field_validator("goal")
     @classmethod

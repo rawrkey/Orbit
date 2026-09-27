@@ -89,6 +89,8 @@ export interface FailureContext {
 /** POST /workflows request */
 export interface CreateWorkflowRequest {
   goal: string;
+  /** Explicit offline-demo signal: run THIS workflow on the scripted demo provider. */
+  demo?: boolean;
 }
 
 /** POST /workflows response (201) */

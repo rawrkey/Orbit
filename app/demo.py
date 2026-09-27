@@ -1,8 +1,9 @@
 """Offline demo scenario: one scripted goal exercising the full loop.
 
-Used by the API when no ``OPENROUTER_API_KEY`` is configured and by the
-end-to-end tests. Fully deterministic and offline: no network, no key,
-no fabrication. The scripted story is:
+Used by the API as the offline fallback when nothing is configured (no
+``OPENROUTER_API_KEY``, web search disabled) and by the end-to-end tests.
+Fully deterministic and offline: no network, no key, no fabrication. The
+scripted story is:
 
     analyze (budget cap) -> plan -> calculator says 9000 -> FAIL
     -> corrective replan -> calculator says 7500 -> PASS

@@ -283,12 +283,12 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
 
   /** Create + hydrate. Returns the workflow id, or null on failure/lock. */
   const createWith = useCallback(
-    async (goal: string): Promise<string | null> => {
+    async (goal: string, options: { demo?: boolean } = {}): Promise<string | null> => {
       if (createLock.current) return null;
       createLock.current = true;
       dispatch({ type: 'CREATE_START' });
       try {
-        const created = await client.createWorkflow(goal);
+        const created = await client.createWorkflow(goal, options);
         window.localStorage.setItem(STORAGE_KEY, created.workflow_id);
         const [status, page] = await Promise.all([
           client.getWorkflow(created.workflow_id),
@@ -378,16 +378,18 @@ export function useOrbit(options: UseOrbitOptions = {}): OrbitController {
   }, [runWith]);
 
   /**
-   * Demo entry point: fills the canonical backend demo goal, creates the
-   * workflow, and runs it — the ordinary API flow, no fabricated events.
-   * (The offline backend serves the scripted adaptive story for this goal.)
+   * Demo entry point: fills the canonical backend demo goal and creates the
+   * workflow with the EXPLICIT demo flag, then runs it — the ordinary API
+   * flow, no fabricated events. The backend routes a demo-flagged workflow
+   * to its scripted offline provider (9000 → FAIL → replan → 7500 → PASS),
+   * so Try Demo never touches OpenRouter even when a key is configured.
    */
   const demo = useCallback((): void => {
     if (createLock.current || runLock.current) return;
     if (stateRef.current.workflowId) return;
     dispatch({ type: 'GOAL', value: DEMO_GOAL });
     void (async () => {
-      const workflowId = await createWith(DEMO_GOAL);
+      const workflowId = await createWith(DEMO_GOAL, { demo: true });
       if (workflowId) await runWith(workflowId);
     })();
   }, [createWith, runWith]);

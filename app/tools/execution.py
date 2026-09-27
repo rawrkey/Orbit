@@ -27,6 +27,10 @@ from app.tools.base import (
     ToolError,
     ToolExecutionError,
     ToolTimeoutError,
+    WebSearchAuthError,
+    WebSearchProviderError,
+    WebSearchResponseError,
+    WebSearchTimeoutError,
     WebSearchUnavailableError,
 )
 from app.tools.registry import ToolNotFoundError, ToolRegistry
@@ -42,6 +46,10 @@ _ERROR_CODES: dict[type[ToolError], str] = {
     FileTooLargeError: "FILE_TOO_LARGE",
     DestinationExistsError: "FILE_EXISTS",
     WebSearchUnavailableError: "UNAVAILABLE",
+    WebSearchProviderError: "SEARCH_PROVIDER_ERROR",
+    WebSearchTimeoutError: "SEARCH_TIMEOUT",
+    WebSearchAuthError: "SEARCH_AUTH_FAILED",
+    WebSearchResponseError: "SEARCH_BAD_RESPONSE",
 }
 
 # Deterministic failures: retrying them can only waste time.
@@ -52,6 +60,8 @@ _NON_RETRYABLE: tuple[type[ToolError], ...] = (
     FileTooLargeError,
     DestinationExistsError,
     WebSearchUnavailableError,
+    WebSearchAuthError,
+    WebSearchResponseError,
 )
 
 
