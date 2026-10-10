@@ -11,7 +11,6 @@
 ![Tests](https://img.shields.io/badge/tests-690%20passing-brightgreen)
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB?logo=vite&logoColor=black)
 ![API](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-yellow)
 ![Secrets](https://img.shields.io/badge/secrets-%E2%9C%94%20none%20committed-red)
 
 </div>
@@ -274,17 +273,5 @@ ORBIT runs on **NVIDIA Nemotron 3 Ultra through OpenRouter** behind the
 `LLMProvider` abstraction, swappable for other OpenRouter models or local
 models without changing agent code.
 
-## 📜 License
 
-Released under the [MIT License](LICENSE).
-
-```
-MIT License · Copyright (c) 2026 rawrkey
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software.
-```
-
-See [LICENSE](LICENSE) for the full text.
+ [LICENSE](LICENSE) for the full text.
