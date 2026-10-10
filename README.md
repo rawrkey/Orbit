@@ -36,7 +36,6 @@ state, never executes code, and never bypasses schemas.
 - [Security notes](#security-notes)
 - [Layout](#layout)
 - [Runtime model](#runtime-model)
-- [License](#license)
 
 ## Status
 
@@ -272,6 +271,3 @@ tests/                  # offline unit + integration + architecture tests
 ORBIT runs on **NVIDIA Nemotron 3 Ultra through OpenRouter** behind the
 `LLMProvider` abstraction, swappable for other OpenRouter models or local
 models without changing agent code.
-
-
- [LICENSE](LICENSE) for the full text.
